@@ -4,6 +4,15 @@ import { ConvexProvider, ConvexReactClient } from "convex/react";
 import { App } from "./App.js";
 import "./styles.css";
 
+const storedTheme = (() => {
+  try {
+    return localStorage.getItem("boop-debug-theme");
+  } catch {
+    return null;
+  }
+})();
+document.documentElement.classList.add(storedTheme === "light" ? "light" : "dark");
+
 const convexUrl = import.meta.env.VITE_CONVEX_URL;
 if (!convexUrl) {
   document.getElementById("root")!.innerHTML = `

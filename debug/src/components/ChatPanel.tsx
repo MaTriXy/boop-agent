@@ -4,14 +4,20 @@ import { api } from "../../../convex/_generated/api.js";
 
 const CONVERSATION_ID = "debug:local";
 
-export function ChatPanel() {
+export function ChatPanel({ isDark }: { isDark: boolean }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const messages = useQuery(api.messages.recent, { conversationId: CONVERSATION_ID, limit: 50 });
+  const messages = useQuery(api.messages.recent, {
+    conversationId: CONVERSATION_ID,
+    limit: 50,
+  });
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+    listRef.current?.scrollTo({
+      top: listRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages?.length]);
 
   async function send() {
@@ -24,34 +30,70 @@ export function ChatPanel() {
         body: JSON.stringify({ conversationId: CONVERSATION_ID, content: input }),
       });
       setInput("");
-    } catch (err) {
-      console.error(err);
     } finally {
       setSending(false);
     }
   }
 
+  const card = isDark
+    ? "bg-slate-900/40 border-slate-800"
+    : "bg-white border-slate-200";
+
   return (
-    <div className="panel" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 100px)" }}>
-      <h2>Local chat</h2>
-      <div ref={listRef} style={{ flex: 1, overflow: "auto", padding: "0.5rem 0" }}>
+    <div
+      className={`flex flex-col h-full rounded-lg border ${card}`}
+      style={{ minHeight: "calc(100vh - 120px)" }}
+    >
+      <div
+        ref={listRef}
+        className="flex-1 overflow-auto debug-scroll p-4 space-y-2"
+      >
         {!messages || messages.length === 0 ? (
-          <div className="empty">No messages yet. Say hi.</div>
+          <div
+            className={`text-center py-8 text-sm ${isDark ? "text-slate-500" : "text-slate-400"}`}
+          >
+            No messages yet. Say hi.
+          </div>
         ) : (
           messages.map((m) => (
-            <div key={m._id} className="row">
-              <div className="meta">
-                <span>{m.role}</span>
-                <span>{new Date(m.createdAt).toLocaleTimeString()}</span>
+            <div
+              key={m._id}
+              className={`max-w-[80%] ${m.role === "user" ? "ml-auto" : ""}`}
+            >
+              <div
+                className={`rounded-lg px-3 py-2 text-sm ${
+                  m.role === "user"
+                    ? "bg-sky-600 text-white"
+                    : isDark
+                      ? "bg-slate-800 text-slate-100"
+                      : "bg-slate-100 text-slate-800"
+                }`}
+              >
+                {m.content}
               </div>
-              <div className="body">{m.content}</div>
+              <div
+                className={`text-[10px] mt-1 mono ${
+                  isDark ? "text-slate-600" : "text-slate-400"
+                } ${m.role === "user" ? "text-right" : ""}`}
+              >
+                {m.role} · {new Date(m.createdAt).toLocaleTimeString()}
+              </div>
             </div>
           ))
         )}
       </div>
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+
+      <div
+        className={`border-t p-3 flex gap-2 ${
+          isDark ? "border-slate-800 bg-slate-950/40" : "border-slate-200"
+        }`}
+      >
         <input
-          style={{ flex: 1 }}
+          className={`flex-1 px-3 py-2 rounded-lg text-sm outline-none ${
+            isDark
+              ? "bg-slate-800 text-slate-100 placeholder-slate-500 focus:bg-slate-700/80"
+              : "bg-slate-100 text-slate-800 placeholder-slate-400 focus:bg-white border border-slate-200"
+          }`}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -63,8 +105,7 @@ export function ChatPanel() {
         <button
           onClick={send}
           disabled={sending || !input.trim()}
-          className="active"
-          style={{ padding: "0.4rem 1rem" }}
+          className="px-4 py-2 rounded-lg text-sm bg-sky-600 text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
           {sending ? "…" : "Send"}
         </button>
