@@ -8,6 +8,7 @@ import { availableIntegrations, spawnExecutionAgent } from "./execution-agent.js
 import { createAutomationMcp } from "./automation-tools.js";
 import { createDraftDecisionMcp } from "./draft-tools.js";
 import { broadcast } from "./broadcast.js";
+import { sendImessage } from "./sendblue.js";
 
 const INTERACTION_SYSTEM = `You are Boop, a personal agent the user texts from iMessage.
 
@@ -36,6 +37,18 @@ recommendation that requires real-world data, a current event, a comparison,
 a tutorial, a how-to, any URL, or anything you'd be tempted to "just know" —
 spawn_agent. No exceptions. Even if you're 99% sure. The sub-agent has
 WebSearch/WebFetch and will return real citations; you don't and won't.
+
+Acknowledgment rule (iMessage UX):
+BEFORE every spawn_agent call, you MUST call send_ack first with a short
+1-sentence message. The user otherwise sees nothing for 10-30 seconds while
+the sub-agent works. Examples of good acks:
+  "On it — one sec 🔍"
+  "Looking into your calendar…"
+  "Drafting that email now."
+  "Checking Slack, hold tight."
+Order: send_ack → spawn_agent → (wait) → final reply with the result.
+Skip the ack ONLY for things you'll answer in under 2 seconds (chit-chat,
+simple memory recall, single automation toggle).
 
 Memory:
 - Call recall() early for anything that might touch the user's preferences, projects, or history.
@@ -101,6 +114,46 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
   const memoryServer = createMemoryMcp(opts.conversationId);
   const automationServer = createAutomationMcp(opts.conversationId);
   const draftDecisionServer = createDraftDecisionMcp(opts.conversationId);
+
+  const ackServer = createSdkMcpServer({
+    name: "boop-ack",
+    version: "0.1.0",
+    tools: [
+      tool(
+        "send_ack",
+        `Send a short acknowledgment message to the user IMMEDIATELY, before a slow operation. Use this BEFORE spawn_agent so the user knows you heard them and are working on it. Keep it to ONE short sentence (ideally under 60 chars) with tone that matches the task. Examples: "On it — one sec 🔍", "Looking into it…", "Drafting now, hold tight.", "Let me check your calendar."`,
+        {
+          message: z.string().describe("1 short sentence ack. No markdown. Emojis OK."),
+        },
+        async (args) => {
+          const text = args.message.trim();
+          if (!text) {
+            return {
+              content: [{ type: "text" as const, text: "Empty ack skipped." }],
+            };
+          }
+          if (opts.conversationId.startsWith("sms:")) {
+            const number = opts.conversationId.slice(4);
+            await sendImessage(number, text);
+          }
+          await convex.mutation(api.messages.send, {
+            conversationId: opts.conversationId,
+            role: "assistant",
+            content: text,
+            turnId,
+          });
+          broadcast("assistant_ack", {
+            conversationId: opts.conversationId,
+            content: text,
+          });
+          log(`→ ack: ${text}`);
+          return {
+            content: [{ type: "text" as const, text: "Ack sent to user." }],
+          };
+        },
+      ),
+    ],
+  });
 
   const spawnServer = createSdkMcpServer({
     name: "boop-spawn",
@@ -171,6 +224,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           "boop-spawn": spawnServer,
           "boop-automations": automationServer,
           "boop-draft-decisions": draftDecisionServer,
+          "boop-ack": ackServer,
         },
         allowedTools: [
           "mcp__boop-memory__write_memory",
@@ -183,6 +237,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           "mcp__boop-draft-decisions__list_drafts",
           "mcp__boop-draft-decisions__send_draft",
           "mcp__boop-draft-decisions__reject_draft",
+          "mcp__boop-ack__send_ack",
         ],
         // Belt-and-suspenders: even with bypassPermissions the SDK can leak
         // its built-ins if we only whitelist. Explicitly block them on the
