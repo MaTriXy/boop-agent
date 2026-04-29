@@ -23,6 +23,25 @@ const CLASSIFIER_MODEL = "claude-haiku-4-5-20251001";
 // preferable to spamming the user with old emails on every server reboot.
 const warmupSeen = new Set<string>();
 
+// Bounded FIFO of recently-handled Gmail messageIds. We ack the webhook
+// 200 immediately, so duplicate deliveries should be rare, but Composio's
+// retry policy on transient errors and the occasional double-fire (race
+// between subscription update + in-flight events) can still produce one.
+// Without dedup that turns into a duplicate iMessage, which is exactly the
+// kind of false alarm that erodes trust in the proactive feature.
+const PROCESSED_MESSAGES_CAP = 1024;
+const processedMessageIds = new Set<string>();
+
+function rememberMessageId(id: string): boolean {
+  if (processedMessageIds.has(id)) return false;
+  if (processedMessageIds.size >= PROCESSED_MESSAGES_CAP) {
+    const oldest = processedMessageIds.values().next().value;
+    if (oldest !== undefined) processedMessageIds.delete(oldest);
+  }
+  processedMessageIds.add(id);
+  return true;
+}
+
 export interface NormalizedEmail {
   messageId?: string;
   threadId?: string;
@@ -365,6 +384,11 @@ export async function handleEmailEvent(event: NormalizedTriggerEvent): Promise<v
   console.log(
     `[proactive] event from ${connectionId}: subject=${JSON.stringify(email.subject || "(none)")} sender=${JSON.stringify(email.sender || "(none)")}`,
   );
+
+  if (email.messageId && !rememberMessageId(email.messageId)) {
+    console.log(`[proactive] dropped (duplicate delivery for messageId=${email.messageId})`);
+    return;
+  }
 
   // Prime the warmup set BEFORE the enabled check. Otherwise events that
   // arrive while the feature is disabled never reach this set, and the very

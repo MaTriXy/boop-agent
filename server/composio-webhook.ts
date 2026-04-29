@@ -104,16 +104,37 @@ export async function ensureWebhookSubscription(publicUrl: string): Promise<Webh
   const existing = (await listWebhookSubscriptions())[0];
   if (!existing) {
     const created = await createWebhookSubscription({ webhook_url: target });
-    if (created.secret) {
+    // If persistence fails after the remote subscription is live we'd be
+    // stuck — the URL is registered but we have no signing secret on file,
+    // and on the next boot ensureWebhookSubscription would short-circuit on
+    // the matching URL and never re-store the secret. Roll back the remote
+    // side instead so the next attempt starts clean.
+    try {
+      if (created.secret) {
+        await convex.mutation(api.settings.set, {
+          key: SETTINGS_SECRET_KEY,
+          value: created.secret,
+        });
+      }
       await convex.mutation(api.settings.set, {
-        key: SETTINGS_SECRET_KEY,
-        value: created.secret,
+        key: SETTINGS_SUBSCRIPTION_ID_KEY,
+        value: created.id,
       });
+    } catch (err) {
+      console.error(
+        `[composio-webhook] failed to persist subscription metadata; rolling back ${created.id}`,
+        err,
+      );
+      try {
+        await deleteWebhookSubscription(created.id);
+      } catch (cleanupErr) {
+        console.error(
+          `[composio-webhook] cleanup of orphaned subscription ${created.id} failed`,
+          cleanupErr,
+        );
+      }
+      throw err;
     }
-    await convex.mutation(api.settings.set, {
-      key: SETTINGS_SUBSCRIPTION_ID_KEY,
-      value: created.id,
-    });
     console.log(`[composio-webhook] subscription created: ${created.id} → ${target}`);
     return created;
   }
